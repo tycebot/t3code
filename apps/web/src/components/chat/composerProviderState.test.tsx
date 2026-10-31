@@ -324,47 +324,24 @@ describe("getComposerReasoningStep", () => {
     ).toStrictEqual(selections(["thinking_level", "high"]));
   });
 
-  it("adds and strips the Ultrathink prefix while the caret stays on the same character", () => {
-    for (const { prompt, modelOptions, direction, expected } of [
-      {
-        prompt: "  Fix the bug \n",
-        modelOptions: selections(["effort", "high"]),
-        direction: 1,
-        expected: { prompt: "Ultrathink:\nFix the bug", cursor: 20 },
-      },
-      {
-        prompt: "Ultrathink:\n  Fix the bug",
-        modelOptions: selections(["effort", "medium"]),
-        direction: -1,
-        expected: {
-          prompt: "Fix the bug",
-          cursor: 8,
-          modelOptions: selections(["effort", "high"]),
-        },
-      },
-    ] as const) {
-      const result = step({
-        ...CLAUDE,
-        prompt,
-        cursor: prompt.indexOf("bug"),
-        modelOptions,
-        direction,
-      });
-      expect(result).toStrictEqual(expected);
-      expect(result?.prompt.slice(result.cursor)).toMatch(/^bug/);
-    }
-    expect(
-      step({ ...CLAUDE, prompt: "   Fix", modelOptions: selections(["effort", "high"]) })?.cursor,
-    ).toBe("Ultrathink:\n".length);
-  });
-
-  it("skips Ultrathink for slash commands and does nothing when the prompt locks it", () => {
-    expect(
-      step({ ...CLAUDE, prompt: "/review", modelOptions: selections(["effort", "high"]) }),
-    ).toStrictEqual({
-      prompt: "/review",
+  it("never steps into Ultrathink and strips a typed prefix with the caret on the same character", () => {
+    expect(step({ ...CLAUDE, modelOptions: selections(["effort", "high"]) })).toStrictEqual({
+      prompt: "Fix the bug",
       cursor: 0,
       modelOptions: selections(["effort", "medium"]),
+    });
+    const prompt = "Ultrathink:\n  Fix the bug";
+    const result = step({
+      ...CLAUDE,
+      prompt,
+      cursor: prompt.indexOf("bug"),
+      modelOptions: selections(["effort", "medium"]),
+      direction: -1,
+    });
+    expect(result).toStrictEqual({
+      prompt: "Fix the bug",
+      cursor: 8,
+      modelOptions: selections(["effort", "high"]),
     });
     for (const [prompt, direction] of [
       ["Please ultrathink harder", 1],
