@@ -831,6 +831,30 @@ const webhookEndpoint = {
 } as const;
 const WEBHOOK_PATH = "/api/hooks/:hookId/:token";
 
+const TTS_MAX_TEXT_LENGTH = 20_000;
+
+export const TtsSynthesizeInput = Schema.Struct({
+  text: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(TTS_MAX_TEXT_LENGTH)),
+});
+
+export const TtsSynthesizeResult = Schema.Struct({
+  /** Signed asset path, relative to the environment origin, serving audio/wav. */
+  url: Schema.String,
+  /** True when the audio came from the server-side cache without synthesizing. */
+  cached: Schema.Boolean,
+  /** Millisecond timestamp when the signed URL stops serving. */
+  expiresAt: Schema.Number,
+});
+
+class EnvironmentTtsHttpApi extends HttpApiGroup.make("tts").add(
+  HttpApiEndpoint.post("synthesize", "/api/tts", {
+    headers: OptionalBearerHeaders,
+    payload: TtsSynthesizeInput,
+    success: TtsSynthesizeResult,
+    error: [EnvironmentRequestInvalidError, EnvironmentInternalError],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.post("webhookPost", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.put("webhookPut", WEBHOOK_PATH, webhookEndpoint))
@@ -845,4 +869,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentTtsHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}

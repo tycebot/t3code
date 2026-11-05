@@ -165,6 +165,13 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("tts-audio"),
+    /** A wav file in the server's TTS cache; the signature pins the path at mint time. */
+    filePath: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal(SOURCE_CONTROL_MEDIA_ASSET),
     /** A host's `fetchUrl`, narrowed at mint time; the signature is what keeps it there. */
     url: Schema.String,
@@ -872,6 +879,33 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
+/**
+ * Mints a signed URL for synthesized speech held in the server's TTS cache.
+ * The cache file path is pinned by the token signature, mirroring how every
+ * other asset URL stays honest without request headers.
+ */
+export const issueTtsAudioUrl = Effect.fn("AssetAccess.issueTtsAudioUrl")(function* (input: {
+  readonly filePath: string;
+  readonly fileName: string;
+}) {
+  const expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
+  const claims = {
+    version: 1 as const,
+    kind: "tts-audio" as const,
+    filePath: input.filePath,
+    expiresAt,
+  };
+  const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
+  const signer = yield* AssetSigner.AssetSigner;
+  // A missing signing key breaks every other asset route too; die with them.
+  const signature = yield* signer.sign(encodedPayload).pipe(Effect.orDie);
+  const token = `${encodedPayload}.${signature}`;
+  return {
+    relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(input.fileName)}`,
+    expiresAt,
+  };
+});
+
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
@@ -970,6 +1004,16 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     const nativeAppIconResolver = yield* NativeAppIconResolver.NativeAppIconResolver;
     const iconPath = yield* nativeAppIconResolver.resolve(claims.app);
     return iconPath ? ({ kind: "file", path: iconPath } satisfies ResolvedAsset) : null;
+  }
+
+  if (claims.kind === "tts-audio") {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const exists = yield* fileSystem
+      .exists(claims.filePath)
+      .pipe(Effect.orElseSucceed(() => false));
+    return exists
+      ? ({ kind: "file", path: claims.filePath, mimeType: "audio/wav" } satisfies ResolvedAsset)
+      : null;
   }
 
   const decodedPath = decodeRelativePath(relativePath);
