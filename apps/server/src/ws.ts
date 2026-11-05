@@ -1,4 +1,5 @@
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+import type { TtsSynthesizeInput } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -194,6 +195,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import * as TtsService from "./tts/TtsService.ts";
 import {
   attachmentRelativePath,
   chatAttachmentStableKey,
@@ -1442,6 +1444,7 @@ export const layerWsRpc = (
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
+      const ttsService = yield* TtsService.TtsService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -2988,6 +2991,8 @@ export const layerWsRpc = (
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>
           agentSessionImporter.importRecentAgentThreads(input),
+        [WS_METHODS.ttsSynthesize]: (input: TtsSynthesizeInput) =>
+          ttsService.synthesize(input.text),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
@@ -3517,6 +3522,7 @@ export const layer = Layer.unwrap(
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
+              Layer.provide(TtsService.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

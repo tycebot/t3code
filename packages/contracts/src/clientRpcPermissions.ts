@@ -16,6 +16,8 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
+  // Synthesis spawns the host's speech process; a read-only connection may not queue work on it.
+  [WS_METHODS.ttsSynthesize]: AuthOrchestrationOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,

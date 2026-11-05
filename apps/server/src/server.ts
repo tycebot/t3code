@@ -206,7 +206,6 @@ import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
-import * as TtsHttp from "./tts/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -767,7 +766,6 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
-      Layer.provide(TtsHttp.serviceLayer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),

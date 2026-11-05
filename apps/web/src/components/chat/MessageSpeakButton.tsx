@@ -1,18 +1,39 @@
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { Square, Volume2, VolumeX } from "lucide";
 import { LoaderCircleIcon } from "lucide-react";
-import * as Effect from "effect/Effect";
-import { Button } from "../ui/button";
+import { TTS_MAX_TEXT_LENGTH, type EnvironmentId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { resolveAssetUrl } from "~/assets/assetUrls";
 import { MorphIcon } from "~/components/MorphIcon";
+import { usePreparedConnection } from "~/state/session";
+import { ttsSynthesize } from "~/state/tts";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
-import { runPrimaryHttp } from "~/lib/runtime";
 import { cn } from "~/lib/utils";
 import { useSpeechPlayback } from "./speechPlayback";
 
-const FAILURE_FLASH_MS = 2500;
+// The request goes to the environment that owns the thread (and its local
+// speech engine) over that environment's RPC connection; the returned signed
+// audio path is resolved against the same environment's HTTP origin, so
+// remote and desktop setups play back without the browser guessing URLs.
+
+function failureReason(error: unknown): string {
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "_tag" in error &&
+    error._tag === "TtsUnavailableError" &&
+    "reason" in error &&
+    typeof error.reason === "string"
+  ) {
+    return error.reason;
+  }
+  return "speech synthesis failed";
+}
 
 export const MessageSpeakButton = memo(function MessageSpeakButton({
+  environmentId,
   messageId,
   text,
   label = "Read aloud",
@@ -20,6 +41,7 @@ export const MessageSpeakButton = memo(function MessageSpeakButton({
   size = "xs",
   className,
 }: {
+  readonly environmentId: EnvironmentId | null;
   readonly messageId: string;
   readonly text: string;
   readonly label?: string;
@@ -30,14 +52,19 @@ export const MessageSpeakButton = memo(function MessageSpeakButton({
   const phase = useSpeechPlayback((state) =>
     state.activeMessageId === messageId ? state.phase : "idle",
   );
-  const [failed, setFailed] = useState(false);
+  const failureReasonText = useSpeechPlayback((state) =>
+    state.activeMessageId === messageId ? state.failureReason : null,
+  );
+  const synthesize = useAtomCommand(ttsSynthesize, { reportFailure: false });
+  const connection = usePreparedConnection(environmentId);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a window timer keeps the failure flash alive for a fixed duration outside React
-  useEffect(() => {
-    if (!failed) return;
-    const timer = window.setTimeout(() => setFailed(false), FAILURE_FLASH_MS);
-    return () => window.clearTimeout(timer);
-  }, [failed]);
+  const tooLong = text.length > TTS_MAX_TEXT_LENGTH;
+  const unavailableReason = tooLong
+    ? "Message is too long to read aloud"
+    : environmentId === null
+      ? "Connect to this environment to read aloud"
+      : null;
+  const disabled = phase === "idle" && unavailableReason !== null;
 
   const handleClick = () => {
     const store = useSpeechPlayback.getState();
@@ -45,67 +72,87 @@ export const MessageSpeakButton = memo(function MessageSpeakButton({
       store.settle();
       return;
     }
-    store.beginLoading(messageId);
-    void runPrimaryHttp(
-      PrimaryEnvironmentHttpClient.pipe(
-        Effect.flatMap((client) => client.tts.synthesize({ headers: {}, payload: { text } })),
-        Effect.map((result) => result.url),
-        Effect.orElseSucceed(() => null),
-      ),
-    )
-      .then((url) => {
-        if (url === null) {
-          const current = useSpeechPlayback.getState();
-          if (current.activeMessageId === messageId) current.settle();
-          setFailed(true);
+    if (environmentId === null || tooLong) return;
+    const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+    const generation = store.beginLoading(messageId);
+    void synthesize({ environmentId, input: { text } }).then(
+      (result) => {
+        if (result._tag === "Failure") {
+          useSpeechPlayback
+            .getState()
+            .fail(messageId, generation, failureReason(squashAtomCommandFailure(result)));
           return;
         }
-        useSpeechPlayback.getState().beginPlaying(messageId, url);
-      })
-      .catch(() => {
-        const current = useSpeechPlayback.getState();
-        if (current.activeMessageId === messageId) current.settle();
-        setFailed(true);
-      });
+        if (httpBaseUrl === null) {
+          useSpeechPlayback
+            .getState()
+            .fail(messageId, generation, "not connected to this environment");
+          return;
+        }
+        const audioUrl = resolveAssetUrl(httpBaseUrl, result.value.url);
+        if (audioUrl === null) {
+          useSpeechPlayback
+            .getState()
+            .fail(messageId, generation, "could not resolve the audio URL");
+          return;
+        }
+        useSpeechPlayback.getState().beginPlaying(messageId, generation, audioUrl);
+      },
+      () => {
+        useSpeechPlayback.getState().fail(messageId, generation, "speech request failed");
+      },
+    );
   };
 
   const tooltip =
-    phase === "playing"
+    unavailableReason ??
+    (phase === "playing"
       ? "Stop reading"
       : phase === "loading"
         ? "Preparing speech…"
-        : failed
-          ? "Speech is unavailable on this environment"
-          : label;
+        : phase === "failed"
+          ? `Couldn’t read aloud: ${failureReasonText ?? "unknown error"}`
+          : label);
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={tooltip}
-            aria-pressed={phase !== "idle"}
-            data-speak-phase={phase}
-            onClick={handleClick}
-            size={size}
-            type="button"
-            variant={variant === "ghost" ? "ghost-muted" : variant}
-            className={className}
-          />
-        }
-      >
-        {phase === "loading" ? (
-          <LoaderCircleIcon className="size-3 animate-spin" />
-        ) : (
-          <MorphIcon
-            className={cn("size-3", (phase === "playing" || failed) && "text-primary")}
-            icon={phase === "playing" ? Square : failed ? VolumeX : Volume2}
-          />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup>
-        <p>{tooltip}</p>
-      </TooltipPopup>
-    </Tooltip>
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label={tooltip}
+              aria-pressed={phase !== "idle"}
+              data-speak-phase={phase}
+              disabled={disabled}
+              onClick={handleClick}
+              size={size}
+              type="button"
+              variant={variant === "ghost" ? "ghost-muted" : variant}
+              className={className}
+            />
+          }
+        >
+          {phase === "loading" ? (
+            <LoaderCircleIcon className="size-3 animate-spin" />
+          ) : (
+            <MorphIcon
+              className={cn(
+                "size-3",
+                (phase === "playing" || phase === "failed") && "text-primary",
+              )}
+              icon={phase === "playing" ? Square : phase === "failed" ? VolumeX : Volume2}
+            />
+          )}
+        </TooltipTrigger>
+        <TooltipPopup>
+          <p>{tooltip}</p>
+        </TooltipPopup>
+      </Tooltip>
+      {phase === "failed" && failureReasonText !== null ? (
+        <p className="sr-only" role="status">
+          Speech unavailable: {failureReasonText}
+        </p>
+      ) : null}
+    </>
   );
 });

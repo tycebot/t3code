@@ -98,6 +98,7 @@ import {
   AgentSessionScanResult,
   AgentSessionScanError,
 } from "./agentSessions.ts";
+import { TtsSynthesizeInput, TtsSynthesizeResult, TtsUnavailableError } from "./tts.ts";
 import {
   AssetAccessError,
   AssetCreateUrlInput,
@@ -425,6 +426,7 @@ export const WS_METHODS = {
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
+  ttsSynthesize: "tts.synthesize",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
 
@@ -1396,6 +1398,12 @@ const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
+const WsTtsSynthesizeRpc = Rpc.make(WS_METHODS.ttsSynthesize, {
+  payload: TtsSynthesizeInput,
+  success: TtsSynthesizeResult,
+  error: Schema.Union([TtsUnavailableError, EnvironmentAuthorizationError]),
+});
+
 const WsAssetsPersistChatAttachmentsRpc = Rpc.make(WS_METHODS.assetsPersistChatAttachments, {
   payload: PersistChatAttachmentsInput,
   success: PersistChatAttachmentsResult,
@@ -2125,6 +2133,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
+  WsTtsSynthesizeRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,

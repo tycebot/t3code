@@ -1,22 +1,29 @@
 import { create } from "zustand";
 
-// One shared speech lane for the whole timeline: starting a new message stops
-// the previous one, mirroring how ChatGPT's read-aloud behaves. The module
-// owns a single HTMLAudioElement so playback outlives row virtualization.
+// One shared speech lane for the timeline: a new message stops the previous
+// one, and a module-owned HTMLAudioElement outlives row virtualization.
+// Every takeover bumps `generation`; async callbacks carrying a stale
+// generation are dropped, so slow responses never interrupt newer speech.
 
-export type SpeechPhase = "idle" | "loading" | "playing";
+export type SpeechPhase = "idle" | "loading" | "playing" | "failed";
 
 interface SpeechPlaybackState {
   readonly activeMessageId: string | null;
   readonly phase: SpeechPhase;
-  beginLoading: (messageId: string) => void;
-  beginPlaying: (messageId: string, url: string) => void;
+  readonly failureReason: string | null;
+  readonly generation: number;
+  beginLoading: (messageId: string) => number;
+  beginPlaying: (messageId: string, generation: number, url: string) => void;
+  fail: (messageId: string, generation: number, reason: string) => void;
   settle: () => void;
 }
 
-let element: HTMLAudioElement | null = null;
+const FAILURE_FLASH_MS = 4000;
 
-function detach() {
+let element: HTMLAudioElement | null = null;
+let failureTimer: number | null = null;
+
+function detachAudio() {
   if (!element) return;
   element.pause();
   element.removeAttribute("src");
@@ -24,34 +31,68 @@ function detach() {
   element = null;
 }
 
+function clearFailureTimer() {
+  if (failureTimer === null) return;
+  window.clearTimeout(failureTimer);
+  failureTimer = null;
+}
+
 export const useSpeechPlayback = create<SpeechPlaybackState>((set, get) => ({
   activeMessageId: null,
   phase: "idle",
+  failureReason: null,
+  generation: 0,
 
   beginLoading: (messageId) => {
-    detach();
-    set({ activeMessageId: messageId, phase: "loading" });
+    detachAudio();
+    clearFailureTimer();
+    const generation = get().generation + 1;
+    set({ activeMessageId: messageId, phase: "loading", failureReason: null, generation });
+    return generation;
   },
 
-  beginPlaying: (messageId, url) => {
+  beginPlaying: (messageId, generation, url) => {
     // A newer click (or a stop) won the request race; discard this take.
-    if (get().activeMessageId !== messageId || get().phase !== "loading") return;
-    detach();
+    const state = get();
+    if (
+      state.generation !== generation ||
+      state.activeMessageId !== messageId ||
+      state.phase !== "loading"
+    ) {
+      return;
+    }
+    detachAudio();
     const audio = new Audio(url);
     const settled = () => {
       if (element !== audio) return;
-      detach();
-      set({ activeMessageId: null, phase: "idle" });
+      detachAudio();
+      set({ activeMessageId: null, phase: "idle", failureReason: null });
     };
     audio.addEventListener("ended", settled);
     audio.addEventListener("error", settled);
     element = audio;
-    set({ activeMessageId: messageId, phase: "playing" });
+    set({ activeMessageId: messageId, phase: "playing", failureReason: null });
     void audio.play().catch(settled);
   },
 
+  fail: (messageId, generation, reason) => {
+    const state = get();
+    if (state.generation !== generation || state.activeMessageId !== messageId) return;
+    detachAudio();
+    set({ phase: "failed", failureReason: reason });
+    clearFailureTimer();
+    failureTimer = window.setTimeout(() => {
+      failureTimer = null;
+      const current = get();
+      if (current.phase === "failed" && current.generation === generation) {
+        set({ activeMessageId: null, phase: "idle", failureReason: null });
+      }
+    }, FAILURE_FLASH_MS);
+  },
+
   settle: () => {
-    detach();
-    set({ activeMessageId: null, phase: "idle" });
+    detachAudio();
+    clearFailureTimer();
+    set({ activeMessageId: null, phase: "idle", failureReason: null });
   },
 }));

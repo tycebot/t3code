@@ -1,5 +1,5 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { type RunId } from "@t3tools/contracts";
+import { type EnvironmentId, type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { memo, use, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
@@ -182,6 +182,7 @@ function AssistantMessageMeta({
         </span>
       ) : null}
       <AssistantCopyButton
+        environmentId={ctx.activeThreadEnvironmentId}
         message={message}
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
@@ -204,10 +205,12 @@ function AssistantMessageMeta({
 }
 
 function AssistantCopyButton({
+  environmentId,
   message,
   showCopyButton,
   streaming,
 }: {
+  environmentId: EnvironmentId | null;
   message: ChatMessage;
   showCopyButton: boolean;
   streaming: boolean;
@@ -225,6 +228,7 @@ function AssistantCopyButton({
   return (
     <>
       <MessageSpeakButton
+        environmentId={environmentId}
         messageId={message.id}
         text={assistantCopyState.text ?? ""}
         variant="ghost"
